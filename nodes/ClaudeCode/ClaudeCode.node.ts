@@ -36,6 +36,12 @@ export class ClaudeCode implements INodeType {
 						action: 'Start a new conversation with claude code',
 					},
 					{
+						name: 'Plan',
+						value: 'plan',
+						description: 'Create a detailed plan before execution (research-only mode)',
+						action: 'Create a detailed plan before execution',
+					},
+					{
 						name: 'Continue',
 						value: 'continue',
 						description: 'Continue a previous conversation (requires prior query)',
@@ -126,6 +132,33 @@ export class ClaudeCode implements INodeType {
 				description: 'Choose how to format the output data',
 			},
 			{
+				displayName: 'Enable Plan Mode',
+				name: 'enablePlanMode',
+				type: 'boolean',
+				default: false,
+				description:
+					'Whether to enable planning mode for Query operations (creates a plan before execution)',
+				displayOptions: {
+					show: {
+						operation: ['query'],
+					},
+				},
+			},
+			{
+				displayName: 'Auto Execute After Plan',
+				name: 'autoExecuteAfterPlan',
+				type: 'boolean',
+				default: false,
+				description:
+					'Whether to automatically proceed to execution after plan approval (requires Enable Plan Mode)',
+				displayOptions: {
+					show: {
+						operation: ['query'],
+						enablePlanMode: [true],
+					},
+				},
+			},
+			{
 				displayName: 'Allowed Tools',
 				name: 'allowedTools',
 				type: 'multiOptions',
@@ -194,14 +227,21 @@ export class ClaudeCode implements INodeType {
 
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			let timeout = 300; // Default timeout
+			let operation: string = '';
 			try {
-				const operation = this.getNodeParameter('operation', itemIndex) as string;
+				operation = this.getNodeParameter('operation', itemIndex) as string;
 				const prompt = this.getNodeParameter('prompt', itemIndex) as string;
 				const model = this.getNodeParameter('model', itemIndex) as string;
 				const maxTurns = this.getNodeParameter('maxTurns', itemIndex) as number;
 				timeout = this.getNodeParameter('timeout', itemIndex) as number;
 				const projectPath = this.getNodeParameter('projectPath', itemIndex) as string;
 				const outputFormat = this.getNodeParameter('outputFormat', itemIndex) as string;
+				const enablePlanMode = this.getNodeParameter('enablePlanMode', itemIndex, false) as boolean;
+				const autoExecuteAfterPlan = this.getNodeParameter(
+					'autoExecuteAfterPlan',
+					itemIndex,
+					false,
+				) as boolean;
 				const allowedTools = this.getNodeParameter('allowedTools', itemIndex, []) as string[];
 				const additionalOptions = this.getNodeParameter('additionalOptions', itemIndex) as {
 					systemPrompt?: string;
@@ -221,14 +261,40 @@ export class ClaudeCode implements INodeType {
 					});
 				}
 
+				// Determine if plan mode should be active
+				const isPlanMode = operation === 'plan' || (operation === 'query' && enablePlanMode);
+
+				// Create planning-specific system prompt
+				let systemPrompt = additionalOptions.systemPrompt || '';
+				if (isPlanMode) {
+					const planningPrompt = `
+You are in plan mode. This is a research and planning phase where you should:
+
+1. **Research thoroughly**: Use read-only tools (Read, Grep, Glob, LS, Task) to understand the codebase and requirements
+2. **Analyze the request**: Break down what needs to be accomplished
+3. **Create a detailed plan**: Present a structured plan of implementation steps
+4. **Use ExitPlanMode tool**: When your plan is complete, use the ExitPlanMode tool to present it
+
+IMPORTANT: In plan mode, you MUST NOT use tools that modify files or execute commands (Write, Edit, MultiEdit, Bash). Only use research and analysis tools.
+
+Your goal is to create a comprehensive plan before any implementation begins.
+					`.trim();
+
+					systemPrompt = systemPrompt ? `${systemPrompt}\n\n${planningPrompt}` : planningPrompt;
+				}
+
 				// Log start
 				if (additionalOptions.debug) {
 					console.log(`[ClaudeCode] Starting execution for item ${itemIndex}`);
+					console.log(`[ClaudeCode] Operation: ${operation} (Plan Mode: ${isPlanMode})`);
 					console.log(`[ClaudeCode] Prompt: ${prompt.substring(0, 100)}...`);
 					console.log(`[ClaudeCode] Model: ${model}`);
 					console.log(`[ClaudeCode] Max turns: ${maxTurns}`);
 					console.log(`[ClaudeCode] Timeout: ${timeout}s`);
 					console.log(`[ClaudeCode] Allowed built-in tools: ${allowedTools.join(', ')}`);
+					if (isPlanMode) {
+						console.log(`[ClaudeCode] Auto execute after plan: ${autoExecuteAfterPlan}`);
+					}
 				}
 
 				// Build query options
@@ -257,9 +323,9 @@ export class ClaudeCode implements INodeType {
 					},
 				};
 
-				// Add optional parameters
-				if (additionalOptions.systemPrompt) {
-					queryOptions.options.systemPrompt = additionalOptions.systemPrompt;
+				// Add system prompt (includes planning prompt if in plan mode)
+				if (systemPrompt) {
+					queryOptions.options.systemPrompt = systemPrompt;
 				}
 
 				// Add project path (cwd) if specified
@@ -270,11 +336,42 @@ export class ClaudeCode implements INodeType {
 					}
 				}
 
-				// Set allowed tools if any are specified
-				if (allowedTools.length > 0) {
-					queryOptions.options.allowedTools = allowedTools;
+				// Set allowed tools based on plan mode
+				let effectiveAllowedTools = allowedTools;
+				if (isPlanMode) {
+					// In plan mode, restrict to read-only tools and ensure ExitPlanMode is available
+					const readOnlyTools = [
+						'Read',
+						'Grep',
+						'Glob',
+						'LS',
+						'Task',
+						'WebFetch',
+						'WebSearch',
+						'TodoWrite',
+					];
+					const planModeTools = allowedTools.filter(
+						(tool) =>
+							readOnlyTools.includes(tool) || tool === 'exit_plan_mode' || tool === 'ExitPlanMode',
+					);
+
+					// Ensure ExitPlanMode tool is always available in plan mode
+					if (!planModeTools.includes('exit_plan_mode')) {
+						planModeTools.push('exit_plan_mode');
+					}
+
+					effectiveAllowedTools = planModeTools;
 					if (additionalOptions.debug) {
-						console.log(`[ClaudeCode] Allowed tools: ${allowedTools.join(', ')}`);
+						console.log(
+							`[ClaudeCode] Plan mode - filtered tools: ${effectiveAllowedTools.join(', ')}`,
+						);
+					}
+				}
+
+				if (effectiveAllowedTools.length > 0) {
+					queryOptions.options.allowedTools = effectiveAllowedTools;
+					if (additionalOptions.debug && !isPlanMode) {
+						console.log(`[ClaudeCode] Allowed tools: ${effectiveAllowedTools.join(', ')}`);
 					}
 				}
 
@@ -350,6 +447,15 @@ export class ClaudeCode implements INodeType {
 						) as any;
 						const resultMessage = messages.find((m) => m.type === 'result') as any;
 
+						// Look for ExitPlanMode tool usage to detect if a plan was created
+						const exitPlanModeUse = toolUses.find((m) => {
+							const content = (m as any).message?.content?.[0];
+							return content?.type === 'tool_use' && content?.name === 'ExitPlanMode';
+						});
+						const planContent = exitPlanModeUse
+							? (exitPlanModeUse as any).message?.content?.[0]?.input?.plan
+							: null;
+
 						returnData.push({
 							json: {
 								messages,
@@ -359,7 +465,13 @@ export class ClaudeCode implements INodeType {
 									toolUseCount: toolUses.length,
 									hasResult: !!resultMessage,
 									toolsAvailable: systemInit?.tools || [],
+									isPlanMode,
+									hasPlan: !!planContent,
+									autoExecuteAfterPlan,
 								},
+								plan: planContent || null,
+								planApproved: false, // This would be set by user interaction in future versions
+								readyForExecution: isPlanMode && autoExecuteAfterPlan && !!planContent,
 								result: resultMessage?.result || resultMessage?.error || null,
 								metrics: resultMessage
 									? {
@@ -381,14 +493,24 @@ export class ClaudeCode implements INodeType {
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
 				const isTimeout = error instanceof Error && error.name === 'AbortError';
+				const isPlanModeError =
+					errorMessage.includes('plan mode') || errorMessage.includes('ExitPlanMode');
 
 				if (this.continueOnFail()) {
 					returnData.push({
 						json: {
 							error: errorMessage,
-							errorType: isTimeout ? 'timeout' : 'execution_error',
+							errorType: isTimeout
+								? 'timeout'
+								: isPlanModeError
+									? 'plan_mode_error'
+									: 'execution_error',
 							errorDetails: error instanceof Error ? error.stack : undefined,
 							itemIndex,
+							isPlanMode:
+								operation === 'plan' ||
+								(operation === 'query' &&
+									this.getNodeParameter('enablePlanMode', itemIndex, false)),
 						},
 						pairedItem: itemIndex,
 					});
@@ -396,9 +518,14 @@ export class ClaudeCode implements INodeType {
 				}
 
 				// Provide more specific error messages
-				const userFriendlyMessage = isTimeout
-					? `Operation timed out after ${timeout} seconds. Consider increasing the timeout in Additional Options.`
-					: `Claude Code execution failed: ${errorMessage}`;
+				let userFriendlyMessage: string;
+				if (isTimeout) {
+					userFriendlyMessage = `Operation timed out after ${timeout} seconds. Consider increasing the timeout in Additional Options.`;
+				} else if (isPlanModeError) {
+					userFriendlyMessage = `Plan mode execution failed: ${errorMessage}. This may be due to known SDK issues with plan mode. Try using regular Query mode instead.`;
+				} else {
+					userFriendlyMessage = `Claude Code execution failed: ${errorMessage}`;
+				}
 
 				throw new NodeOperationError(this.getNode(), userFriendlyMessage, {
 					itemIndex,
