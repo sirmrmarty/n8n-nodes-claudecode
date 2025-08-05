@@ -9,10 +9,7 @@ cd /home/node/.n8n/custom
 git clone https://github.com/sirmrmarty/n8n-nodes-claudecode.git
 cd n8n-nodes-claudecode
 npm install
-npm run build
-npm link
-cd ..
-npm link n8n-nodes-claudecode
+./install-to-n8n.sh
 
 # Install Claude Code CLI locally (no root needed)
 echo "Installing Claude Code CLI locally..."
@@ -32,7 +29,12 @@ export PATH="/home/node/.local/bin:$PATH"
 # Test the installations
 echo "Testing installations..."
 echo "1. Custom node installed:"
-ls -la /home/node/.n8n/custom/node_modules/@holtweb/ 2>/dev/null && echo "✅ Custom node found" || echo "❌ Custom node not found"
+# Check both possible locations
+if [ -d "/home/node/.n8n/custom/n8n-nodes-claudecode" ]; then
+    ls -la /home/node/.n8n/custom/n8n-nodes-claudecode/ && echo "✅ Custom node found"
+else
+    ls -la ~/.n8n/custom/n8n-nodes-claudecode/ 2>/dev/null && echo "✅ Custom node found" || echo "❌ Custom node not found"
+fi
 
 echo "2. Claude CLI installed:"
 /home/node/.local/bin/claude --version 2>/dev/null && echo "✅ Claude CLI working" || echo "❌ Claude CLI not working"
