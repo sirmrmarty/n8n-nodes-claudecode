@@ -1,6 +1,6 @@
 {
-  "name": "@holtweb/n8n-nodes-claudecode",
-  "version": "0.2.0",
+  "name": "@sirmrmarty/n8n-nodes-claudecode",
+  "version": "0.3.3",
   "description": "n8n node for Claude Code SDK integration with MCP support",
   "keywords": [
     "n8n-community-node-package",
@@ -13,17 +13,17 @@
     "model-context-protocol"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/holt-web-ai/n8n-nodes-claudecode#readme",
+  "homepage": "https://github.com/sirmrmarty/n8n-nodes-claudecode#readme",
   "bugs": {
-    "url": "https://github.com/holt-web-ai/n8n-nodes-claudecode/issues"
+    "url": "https://github.com/sirmrmarty/n8n-nodes-claudecode/issues"
   },
   "author": {
-    "name": "Adam Holt",
-    "email": "adam@holtweb.co.nz"
+    "name": "sirmrmarty",
+    "email": "sirmrmarty@users.noreply.github.com"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/holt-web-ai/n8n-nodes-claudecode.git"
+    "url": "https://github.com/sirmrmarty/n8n-nodes-claudecode.git"
   },
   "engines": {
     "node": ">=20.15"
@@ -35,7 +35,9 @@
     "format": "prettier nodes --write",
     "lint": "eslint nodes package.json",
     "lintfix": "eslint nodes package.json --fix",
-    "prepublishOnly": "npm run build && npm run lint -c .eslintrc.prepublish.js nodes package.json"
+    "prepublishOnly": "npm run build && npm run lint -c .eslintrc.prepublish.js nodes package.json",
+    "publish:dry": "npm publish --dry-run",
+    "publish:public": "npm publish --access public"
   },
   "files": [
     "dist"

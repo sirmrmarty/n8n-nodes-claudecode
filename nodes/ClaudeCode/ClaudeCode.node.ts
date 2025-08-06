@@ -36,6 +36,18 @@ export class ClaudeCode implements INodeType {
 						action: 'Start a new conversation with claude code',
 					},
 					{
+						name: 'Plan',
+						value: 'plan',
+						description: 'Create a plan for a task without execution',
+						action: 'Create a plan for a task without execution',
+					},
+					{
+						name: 'Approve Plan',
+						value: 'approve',
+						description: 'Approve and execute a previously created plan',
+						action: 'Approve and execute a previously created plan',
+					},
+					{
 						name: 'Continue',
 						value: 'continue',
 						description: 'Continue a previous conversation (requires prior query)',
@@ -158,6 +170,62 @@ export class ClaudeCode implements INodeType {
 				default: {},
 				options: [
 					{
+						displayName: 'Auto-Approve Simple Plans',
+						name: 'autoApprove',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to automatically execute simple plans without requiring approval (only applicable for Plan operation)',
+					},
+					{
+						displayName: 'Debug Mode',
+						name: 'debug',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to enable debug logging',
+					},
+					{
+						displayName: 'Plan Detail Level',
+						name: 'planDetailLevel',
+						type: 'options',
+						options: [
+							{
+								name: 'High Level',
+								value: 'high',
+								description: 'Brief overview of main steps',
+							},
+							{
+								name: 'Detailed',
+								value: 'detailed',
+								description: 'Comprehensive plan with specific actions',
+							},
+							{
+								name: 'Step-by-Step',
+								value: 'stepwise',
+								description: 'Granular breakdown of every action',
+							},
+						],
+						default: 'detailed',
+						description: 'Level of detail for the generated plan (only applicable for Plan operation)',
+					},
+					{
+						displayName: 'Plan Modifications',
+						name: 'planModifications',
+						type: 'string',
+						typeOptions: {
+							rows: 3,
+						},
+						default: '',
+						description: 'Modifications or feedback to apply to the plan before execution (only applicable for Approve Plan operation)',
+						placeholder: 'e.g., "Skip the testing step" or "Add error handling to step 3"',
+					},
+					{
+						displayName: 'Require Permissions',
+						name: 'requirePermissions',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to require permission for tool use',
+					},
+					{
 						displayName: 'System Prompt',
 						name: 'systemPrompt',
 						type: 'string',
@@ -169,24 +237,53 @@ export class ClaudeCode implements INodeType {
 						placeholder:
 							'You are helping with a Python project. Focus on clean, readable code with proper error handling.',
 					},
-					{
-						displayName: 'Require Permissions',
-						name: 'requirePermissions',
-						type: 'boolean',
-						default: false,
-						description: 'Whether to require permission for tool use',
-					},
-					{
-						displayName: 'Debug Mode',
-						name: 'debug',
-						type: 'boolean',
-						default: false,
-						description: 'Whether to enable debug logging',
-					},
 				],
 			},
 		],
 	};
+
+	private static generatePlanningSystemPrompt(detailLevel: string, autoApprove?: boolean): string {
+		let prompt = `You are Claude Code in planning mode. Your task is to create a comprehensive plan for the user's request and then use the ExitPlanMode tool to present it.
+
+Planning Guidelines:
+- Analyze the task thoroughly before creating the plan
+- Break down the task into logical, sequential steps
+- Consider dependencies between steps
+- Identify potential challenges or considerations
+- Suggest best practices and optimization opportunities`;
+
+		switch (detailLevel) {
+			case 'high':
+				prompt += `\n\nPlan Detail Level: HIGH LEVEL
+- Focus on major phases and key milestones
+- Keep each step broad and strategic
+- Limit to 3-7 main steps maximum`;
+				break;
+			case 'stepwise':
+				prompt += `\n\nPlan Detail Level: STEP-BY-STEP  
+- Provide granular, actionable steps
+- Include specific commands, file names, and configurations
+- Break down complex steps into sub-steps
+- Include validation and testing steps`;
+				break;
+			default: // 'detailed'
+				prompt += `\n\nPlan Detail Level: DETAILED
+- Provide specific, actionable steps
+- Include relevant technical details
+- Balance comprehensiveness with readability
+- Include key considerations for each step`;
+		}
+
+		if (autoApprove) {
+			prompt += `\n\nAuto-Approval Mode: If the plan is simple (≤5 steps) and low-risk (no destructive operations), you may proceed with execution after presenting the plan. Otherwise, wait for user approval.`;
+		} else {
+			prompt += `\n\nApproval Required: Always wait for explicit user approval before executing the plan.`;
+		}
+
+		prompt += `\n\nAfter creating your plan, use the ExitPlanMode tool to present it for review and approval.`;
+
+		return prompt;
+	}
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
@@ -205,6 +302,9 @@ export class ClaudeCode implements INodeType {
 				const allowedTools = this.getNodeParameter('allowedTools', itemIndex, []) as string[];
 				const additionalOptions = this.getNodeParameter('additionalOptions', itemIndex) as {
 					systemPrompt?: string;
+					planDetailLevel?: string;
+					planModifications?: string;
+					autoApprove?: boolean;
 					requirePermissions?: boolean;
 					debug?: boolean;
 				};
@@ -231,6 +331,30 @@ export class ClaudeCode implements INodeType {
 					console.log(`[ClaudeCode] Allowed built-in tools: ${allowedTools.join(', ')}`);
 				}
 
+				// Handle operation-specific logic and system prompts
+				let operationPrompt = prompt;
+				let operationSystemPrompt = additionalOptions.systemPrompt || '';
+
+				if (operation === 'plan') {
+					// Generate planning system prompt based on detail level
+					const detailLevel = additionalOptions.planDetailLevel || 'detailed';
+					const planningInstructions = ClaudeCode.generatePlanningSystemPrompt(detailLevel, additionalOptions.autoApprove);
+					operationSystemPrompt = operationSystemPrompt 
+						? `${operationSystemPrompt}\n\n${planningInstructions}`
+						: planningInstructions;
+					
+					// Modify the prompt to request a plan
+					operationPrompt = `Please create a ${detailLevel} plan for the following task. After creating the plan, use the ExitPlanMode tool to present it for approval:\n\n${prompt}`;
+				} else if (operation === 'approve') {
+					// Handle plan approval with modifications
+					const modifications = additionalOptions.planModifications;
+					if (modifications && modifications.trim()) {
+						operationPrompt = `Please execute the previously created plan with the following modifications:\n\n${modifications}\n\nOriginal request: ${prompt}`;
+					} else {
+						operationPrompt = `Please execute the previously created plan for:\n\n${prompt}`;
+					}
+				}
+
 				// Build query options
 				interface QueryOptions {
 					prompt: string;
@@ -248,7 +372,7 @@ export class ClaudeCode implements INodeType {
 				}
 
 				const queryOptions: QueryOptions = {
-					prompt,
+					prompt: operationPrompt,
 					abortController,
 					options: {
 						maxTurns,
@@ -257,9 +381,9 @@ export class ClaudeCode implements INodeType {
 					},
 				};
 
-				// Add optional parameters
-				if (additionalOptions.systemPrompt) {
-					queryOptions.options.systemPrompt = additionalOptions.systemPrompt;
+				// Add system prompt if provided
+				if (operationSystemPrompt) {
+					queryOptions.options.systemPrompt = operationSystemPrompt;
 				}
 
 				// Add project path (cwd) if specified
@@ -279,7 +403,7 @@ export class ClaudeCode implements INodeType {
 				}
 
 				// Add continue flag if needed
-				if (operation === 'continue') {
+				if (operation === 'continue' || operation === 'approve') {
 					queryOptions.options.continue = true;
 				}
 
