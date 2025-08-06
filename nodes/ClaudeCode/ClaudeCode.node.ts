@@ -6,6 +6,8 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionType, NodeOperationError } from 'n8n-workflow';
 import { query, type SDKMessage } from '@anthropic-ai/claude-code';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export class ClaudeCode implements INodeType {
 	description: INodeTypeDescription = {
@@ -30,18 +32,6 @@ export class ClaudeCode implements INodeType {
 				noDataExpression: true,
 				options: [
 					{
-						name: 'Query',
-						value: 'query',
-						description: 'Start a new conversation with Claude Code',
-						action: 'Start a new conversation with claude code',
-					},
-					{
-						name: 'Plan',
-						value: 'plan',
-						description: 'Create a plan for a task without execution',
-						action: 'Create a plan for a task without execution',
-					},
-					{
 						name: 'Approve Plan',
 						value: 'approve',
 						description: 'Approve and execute a previously created plan',
@@ -52,6 +42,24 @@ export class ClaudeCode implements INodeType {
 						value: 'continue',
 						description: 'Continue a previous conversation (requires prior query)',
 						action: 'Continue a previous conversation requires prior query',
+					},
+					{
+						name: 'Plan',
+						value: 'plan',
+						description: 'Create a plan for a task without execution',
+						action: 'Create a plan for a task without execution',
+					},
+					{
+						name: 'Query',
+						value: 'query',
+						description: 'Start a new conversation with Claude Code',
+						action: 'Start a new conversation with claude code',
+					},
+					{
+						name: 'Test Project Path',
+						value: 'testPath',
+						description: 'Validate the project path without executing Claude Code',
+						action: 'Test and validate the specified project path',
 					},
 				],
 				default: 'query',
@@ -68,6 +76,11 @@ export class ClaudeCode implements INodeType {
 				required: true,
 				placeholder: 'e.g., "Create a Python function to parse CSV files"',
 				hint: 'Use expressions like {{$json.prompt}} to use data from previous nodes',
+				displayOptions: {
+					hide: {
+						operation: ['testPath'],
+					},
+				},
 			},
 			{
 				displayName: 'Model',
@@ -242,6 +255,57 @@ export class ClaudeCode implements INodeType {
 		],
 	};
 
+	private static validateProjectPath(projectPath: string, debug: boolean = false): { valid: boolean; error?: string; warning?: string } {
+		const resolvedPath = path.resolve(projectPath);
+		
+		if (debug) {
+			console.log(`[ClaudeCode] Validating project path: ${projectPath} -> ${resolvedPath}`);
+		}
+		
+		// Check if path exists
+		if (!fs.existsSync(resolvedPath)) {
+			return {
+				valid: false,
+				error: `Project directory does not exist: ${resolvedPath}. Please create the directory or check the path.`
+			};
+		}
+		
+		// Check if it's a directory
+		const stats = fs.statSync(resolvedPath);
+		if (!stats.isDirectory()) {
+			return {
+				valid: false,
+				error: `Project path is not a directory: ${resolvedPath}. Please specify a valid directory path.`
+			};
+		}
+		
+		// Check read permissions
+		try {
+			fs.accessSync(resolvedPath, fs.constants.R_OK);
+		} catch {
+			return {
+				valid: false,
+				error: `No read permission for project directory: ${resolvedPath}. Please check directory permissions.`
+			};
+		}
+		
+		// Check write permissions
+		try {
+			fs.accessSync(resolvedPath, fs.constants.W_OK);
+		} catch {
+			return {
+				valid: false,
+				warning: `No write permission for project directory: ${resolvedPath}. Claude Code may not be able to create or modify files.`
+			};
+		}
+		
+		if (debug) {
+			console.log(`[ClaudeCode] Project path validation successful: ${resolvedPath}`);
+		}
+		
+		return { valid: true };
+	}
+
 	private static generatePlanningSystemPrompt(detailLevel: string, autoApprove?: boolean): string {
 		let prompt = `You are Claude Code in planning mode. Your task is to create a comprehensive plan for the user's request and then use the ExitPlanMode tool to present it.
 
@@ -329,8 +393,67 @@ Planning Guidelines:
 					console.log(`[ClaudeCode] Max turns: ${maxTurns}`);
 					console.log(`[ClaudeCode] Timeout: ${timeout}s`);
 					console.log(`[ClaudeCode] Allowed built-in tools: ${allowedTools.join(', ')}`);
+					
+					// System context information
+					console.log(`[ClaudeCode] System context:`);
+					console.log(`  - Current working directory: ${process.cwd()}`);
+					console.log(`  - Process user: ${process.getuid ? process.getuid() : 'N/A'} (${process.env.USER || 'unknown'})`);
+					console.log(`  - Node.js version: ${process.version}`);
+					console.log(`  - Platform: ${process.platform}`);
+					if (projectPath) {
+						console.log(`  - Requested project path: ${projectPath}`);
+					}
 				}
 
+				// Handle Test Project Path operation
+				if (operation === 'testPath') {
+					if (!projectPath || projectPath.trim() === '') {
+						throw new NodeOperationError(this.getNode(), 'Project Path is required for Test Project Path operation', {
+							itemIndex,
+							description: 'Please specify a project path to test in the Project Path field.',
+						});
+					}
+					
+					const trimmedPath = projectPath.trim();
+					const validation = ClaudeCode.validateProjectPath(trimmedPath, true); // Always debug for test
+					
+					console.log(`[ClaudeCode] Project Path Test Results:`);
+					console.log(`  - Original path: ${projectPath}`);
+					console.log(`  - Resolved path: ${path.resolve(trimmedPath)}`);
+					console.log(`  - Validation result: ${validation.valid ? 'PASSED' : 'FAILED'}`);
+					
+					if (validation.error) {
+						console.log(`  - Error: ${validation.error}`);
+					}
+					if (validation.warning) {
+						console.log(`  - Warning: ${validation.warning}`);
+					}
+					
+					// Return test results without executing Claude Code
+					returnData.push({
+						json: {
+							test: 'project_path_validation',
+							originalPath: projectPath,
+							resolvedPath: path.resolve(trimmedPath),
+							valid: validation.valid,
+							error: validation.error || null,
+							warning: validation.warning || null,
+							systemContext: {
+								currentWorkingDirectory: process.cwd(),
+								processUser: process.env.USER || 'unknown',
+								processUid: process.getuid ? process.getuid() : null,
+								platform: process.platform,
+								nodeVersion: process.version,
+							},
+							success: validation.valid,
+						},
+						pairedItem: itemIndex,
+					});
+					
+					// Skip the rest of the execution for test operation
+					continue;
+				}
+				
 				// Handle operation-specific logic and system prompts
 				let operationPrompt = prompt;
 				let operationSystemPrompt = additionalOptions.systemPrompt || '';
@@ -388,7 +511,24 @@ Planning Guidelines:
 
 				// Add project path (cwd) if specified
 				if (projectPath && projectPath.trim() !== '') {
-					queryOptions.cwd = projectPath.trim();
+					const trimmedPath = projectPath.trim();
+					
+					// Validate project path
+					const validation = ClaudeCode.validateProjectPath(trimmedPath, additionalOptions.debug);
+					
+					if (!validation.valid) {
+						throw new NodeOperationError(this.getNode(), `Project Path Error: ${validation.error}`, {
+							itemIndex,
+							description: 'Please check that the project directory exists and has appropriate permissions.',
+						});
+					}
+					
+					// Show warning if write permissions are missing
+					if (validation.warning && additionalOptions.debug) {
+						console.warn(`[ClaudeCode] Warning: ${validation.warning}`);
+					}
+					
+					queryOptions.cwd = path.resolve(trimmedPath);
 					if (additionalOptions.debug) {
 						console.log(`[ClaudeCode] Working directory set to: ${queryOptions.cwd}`);
 					}
