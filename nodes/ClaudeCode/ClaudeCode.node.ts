@@ -8,6 +8,7 @@ import { NodeConnectionType, NodeOperationError } from 'n8n-workflow';
 import { query, type SDKMessage } from '@anthropic-ai/claude-code';
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 
 interface ProjectPathValidationResult {
 	isValid: boolean;
@@ -235,6 +236,72 @@ export class ClaudeCode implements INodeType {
 		],
 	};
 
+	private static async checkClaudeCLI(debug: boolean = false): Promise<{
+		isAvailable: boolean;
+		isAuthenticated: boolean;
+		version?: string;
+		error?: string;
+	}> {
+		try {
+			// Check if claude command is available
+			const versionOutput = execSync('claude --version', {
+				encoding: 'utf8',
+				timeout: 10000,
+				stdio: ['pipe', 'pipe', 'pipe'],
+			}).trim();
+
+			if (debug) {
+				console.log(`[ClaudeCode] Claude CLI version: ${versionOutput}`);
+			}
+
+			// Try to check authentication by running a simple command
+			try {
+				execSync('claude auth whoami', {
+					encoding: 'utf8',
+					timeout: 10000,
+					stdio: ['pipe', 'pipe', 'pipe'],
+				});
+
+				if (debug) {
+					console.log(`[ClaudeCode] Claude CLI authentication: OK`);
+				}
+
+				return {
+					isAvailable: true,
+					isAuthenticated: true,
+					version: versionOutput,
+				};
+			} catch (authError) {
+				if (debug) {
+					console.warn(
+						`[ClaudeCode] Claude CLI authentication check failed: ${authError instanceof Error ? authError.message : 'Unknown error'}`,
+					);
+				}
+
+				return {
+					isAvailable: true,
+					isAuthenticated: false,
+					version: versionOutput,
+					error:
+						'Claude CLI is installed but not authenticated. Run "claude auth login" to authenticate.',
+				};
+			}
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+			if (debug) {
+				console.error(`[ClaudeCode] Claude CLI not available: ${errorMessage}`);
+			}
+
+			return {
+				isAvailable: false,
+				isAuthenticated: false,
+				error:
+					'Claude CLI is not installed or not accessible. Install with: npm install -g @anthropic-ai/claude-code',
+			};
+		}
+	}
+
 	private static async validateProjectPath(
 		projectPath: string,
 		debug: boolean = false,
@@ -382,18 +449,53 @@ Your goal is to create a comprehensive plan before any implementation begins.
 					systemPrompt = systemPrompt ? `${systemPrompt}\n\n${planningPrompt}` : planningPrompt;
 				}
 
+				// Check Claude CLI availability and authentication
+				const cliCheck = await ClaudeCode.checkClaudeCLI(additionalOptions.debug);
+
+				if (!cliCheck.isAvailable) {
+					throw new NodeOperationError(
+						this.getNode(),
+						cliCheck.error || 'Claude CLI not available',
+						{
+							itemIndex,
+							description: 'Ensure Claude CLI is installed and accessible in the system PATH',
+						},
+					);
+				}
+
+				if (!cliCheck.isAuthenticated) {
+					throw new NodeOperationError(
+						this.getNode(),
+						cliCheck.error || 'Claude CLI not authenticated',
+						{
+							itemIndex,
+							description: 'Run "claude auth login" to authenticate with your Claude account',
+						},
+					);
+				}
+
 				// Log start
 				if (additionalOptions.debug) {
+					console.log(`[ClaudeCode] ========== EXECUTION START ==========`);
 					console.log(`[ClaudeCode] Starting execution for item ${itemIndex}`);
+					console.log(`[ClaudeCode] Claude CLI: ${cliCheck.version} (authenticated)`);
 					console.log(`[ClaudeCode] Operation: ${operation} (Plan Mode: ${isPlanMode})`);
-					console.log(`[ClaudeCode] Prompt: ${prompt.substring(0, 100)}...`);
+					console.log(`[ClaudeCode] Prompt length: ${prompt.length} chars`);
+					console.log(
+						`[ClaudeCode] Prompt preview: ${prompt.substring(0, 200)}${prompt.length > 200 ? '...' : ''}`,
+					);
 					console.log(`[ClaudeCode] Model: ${model}`);
 					console.log(`[ClaudeCode] Max turns: ${maxTurns}`);
 					console.log(`[ClaudeCode] Timeout: ${timeout}s`);
+					console.log(`[ClaudeCode] Output format: ${outputFormat}`);
 					console.log(`[ClaudeCode] Allowed built-in tools: ${allowedTools.join(', ')}`);
+					console.log(
+						`[ClaudeCode] System prompt: ${systemPrompt ? 'Yes (' + systemPrompt.length + ' chars)' : 'None'}`,
+					);
 					if (isPlanMode) {
 						console.log(`[ClaudeCode] Auto execute after plan: ${autoExecuteAfterPlan}`);
 					}
+					console.log(`[ClaudeCode] ========================================`);
 				}
 
 				// Build query options
@@ -529,11 +631,17 @@ Your goal is to create a comprehensive plan before any implementation begins.
 				}
 
 				try {
+					let messageCount = 0;
+					let lastMessageTime = Date.now();
+					const messageTimeout = 30000; // 30 seconds without messages indicates issue
+
 					for await (const message of query(queryOptions)) {
 						messages.push(message);
+						messageCount++;
+						lastMessageTime = Date.now();
 
 						if (additionalOptions.debug) {
-							console.log(`[ClaudeCode] Received message type: ${message.type}`);
+							console.log(`[ClaudeCode] Received message ${messageCount} type: ${message.type}`);
 						}
 
 						// Track progress
@@ -563,26 +671,128 @@ Your goal is to create a comprehensive plan before any implementation begins.
 							}
 						}
 					}
+
+					// Check if we may have timed out waiting for messages
+					const timeSinceLastMessage = Date.now() - lastMessageTime;
+					if (messageCount === 0 && timeSinceLastMessage > messageTimeout) {
+						if (additionalOptions.debug) {
+							console.warn(
+								`[ClaudeCode] No messages received for ${timeSinceLastMessage}ms - possible connection issue`,
+							);
+						}
+					}
 					querySucceeded = true;
 
 					clearTimeout(timeoutId);
 
 					const duration = Date.now() - startTime;
+
+					// Validate that we received meaningful messages
+					if (messages.length === 0) {
+						const warningMsg =
+							'Claude Code SDK returned no messages. This may indicate authentication issues, network problems, or API limitations.';
+						if (additionalOptions.debug) {
+							console.warn(`[ClaudeCode] ${warningMsg}`);
+						}
+
+						// Return diagnostic information instead of empty result
+						returnData.push({
+							json: {
+								warning: warningMsg,
+								messages: [],
+								messageCount: 0,
+								duration_ms: duration,
+								diagnostics: {
+									claudeCLI: cliCheck,
+									queryOptions: {
+										model: queryOptions.options.model,
+										maxTurns: queryOptions.options.maxTurns,
+										toolCount: queryOptions.options.allowedTools?.length || 0,
+										hasSystemPrompt: !!queryOptions.options.systemPrompt,
+										hasCwd: !!queryOptions.cwd,
+									},
+								},
+								success: false,
+							},
+							pairedItem: itemIndex,
+						});
+						continue; // Skip to next item
+					}
+
 					if (additionalOptions.debug) {
 						console.log(
 							`[ClaudeCode] Execution completed in ${duration}ms with ${messages.length} messages`,
 						);
+
+						// Log message types for debugging
+						const messageTypes = messages.reduce(
+							(acc, msg) => {
+								acc[msg.type] = (acc[msg.type] || 0) + 1;
+								return acc;
+							},
+							{} as Record<string, number>,
+						);
+						console.log(`[ClaudeCode] Message breakdown:`, messageTypes);
+					}
+
+					// Additional validation for meaningful responses
+					const resultMessage = messages.find((m) => m.type === 'result') as any;
+					const assistantMessages = messages.filter((m) => m.type === 'assistant');
+					const hasAssistantContent = assistantMessages.some(
+						(m: any) =>
+							m.message?.content?.length > 0 &&
+							m.message.content.some((c: any) => c.type === 'text' && c.text?.trim()),
+					);
+
+					// Check if we have a meaningful response
+					if (!hasAssistantContent && !resultMessage) {
+						const diagnosticMsg = `Claude Code executed but produced no meaningful response. Received ${messages.length} messages but no assistant content or result.`;
+
+						if (additionalOptions.debug) {
+							console.warn(`[ClaudeCode] ${diagnosticMsg}`);
+							console.log(`[ClaudeCode] Raw messages:`, JSON.stringify(messages, null, 2));
+						}
+
+						returnData.push({
+							json: {
+								warning: diagnosticMsg,
+								messages,
+								messageCount: messages.length,
+								duration_ms: duration,
+								diagnostics: {
+									claudeCLI: cliCheck,
+									messageTypes: messages.reduce(
+										(acc, msg) => {
+											acc[msg.type] = (acc[msg.type] || 0) + 1;
+											return acc;
+										},
+										{} as Record<string, number>,
+									),
+									hasAssistantMessages: assistantMessages.length > 0,
+									hasResultMessage: !!resultMessage,
+									queryOptions: {
+										model: queryOptions.options.model,
+										maxTurns: queryOptions.options.maxTurns,
+										toolCount: queryOptions.options.allowedTools?.length || 0,
+										hasSystemPrompt: !!queryOptions.options.systemPrompt,
+										hasCwd: !!queryOptions.cwd,
+									},
+								},
+								success: false,
+							},
+							pairedItem: itemIndex,
+						});
+						continue; // Skip to next item
 					}
 
 					// Format output based on selected format
 					if (outputFormat === 'text') {
 						// Find the result message
-						const resultMessage = messages.find((m) => m.type === 'result') as any;
 						returnData.push({
 							json: {
 								result: resultMessage?.result || resultMessage?.error || '',
 								success: resultMessage?.subtype === 'success',
-								duration_ms: resultMessage?.duration_ms,
+								duration_ms: resultMessage?.duration_ms || duration,
 								total_cost_usd: resultMessage?.total_cost_usd,
 							},
 							pairedItem: itemIndex,
@@ -630,6 +840,7 @@ Your goal is to create a comprehensive plan before any implementation begins.
 									isPlanMode,
 									hasPlan: !!planContent,
 									autoExecuteAfterPlan,
+									hasAssistantContent,
 								},
 								plan: planContent || null,
 								planApproved: false, // This would be set by user interaction in future versions
@@ -642,8 +853,27 @@ Your goal is to create a comprehensive plan before any implementation begins.
 											total_cost_usd: resultMessage.total_cost_usd,
 											usage: resultMessage.usage,
 										}
-									: null,
+									: {
+											duration_ms: duration,
+											num_turns: messages.length,
+											total_cost_usd: 0,
+											usage: null,
+										},
 								success: resultMessage?.subtype === 'success',
+								// Add diagnostic info if no meaningful result
+								diagnostics:
+									!resultMessage && !hasAssistantContent
+										? {
+												claudeCLI: cliCheck,
+												messageTypes: messages.reduce(
+													(acc, msg) => {
+														acc[msg.type] = (acc[msg.type] || 0) + 1;
+														return acc;
+													},
+													{} as Record<string, number>,
+												),
+											}
+										: undefined,
 							},
 							pairedItem: itemIndex,
 						});

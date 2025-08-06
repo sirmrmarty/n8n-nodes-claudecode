@@ -48,18 +48,20 @@ Transform support tickets into code fixes automatically:
 
 ### Install in n8n
 
-#### Option 1: Via n8n UI (Recommended)
+#### Option 1: Via n8n UI (Recommended) - Improved Version
 1. Open your n8n instance
 2. Go to **Settings** → **Community Nodes**
 3. Click **Install a community node**
-4. Enter: `@holtweb/n8n-nodes-claudecode`
+4. Enter: `@sirmrmarty/n8n-nodes-claudecode`
 5. Click **Install**
 6. Restart n8n when prompted
+
+*This version includes enhanced project path validation, better error handling, and comprehensive debugging capabilities.*
 
 #### Option 2: Manual Installation
 ```bash
 cd ~/.n8n/nodes
-npm install @holtweb/n8n-nodes-claudecode
+npm install @sirmrmarty/n8n-nodes-claudecode
 # Restart n8n
 ```
 
@@ -67,14 +69,17 @@ npm install @holtweb/n8n-nodes-claudecode
 ```bash
 docker run -it --rm \
   -p 5678:5678 \
-  -e N8N_COMMUNITY_NODE_PACKAGES=@holtweb/n8n-nodes-claudecode \
+  -e N8N_COMMUNITY_NODE_PACKAGES=@sirmrmarty/n8n-nodes-claudecode \
   -v ~/.n8n:/home/node/.n8n \
   n8nio/n8n
 ```
 
+#### Option 4: GitHub Clone (Development Version)
+For the absolute latest improvements, see [INSTALL.md](./INSTALL.md) for detailed GitHub installation instructions.
+
 **Note**: For Docker, you'll need to ensure Claude Code CLI is installed inside the container. Consider creating a custom Dockerfile.
 
-📦 **NPM Package**: [@holtweb/n8n-nodes-claudecode](https://www.npmjs.com/package/@holtweb/n8n-nodes-claudecode)
+📦 **NPM Package**: [@sirmrmarty/n8n-nodes-claudecode](https://www.npmjs.com/package/@sirmrmarty/n8n-nodes-claudecode)
 
 ## 🎯 Real-World Use Cases
 
