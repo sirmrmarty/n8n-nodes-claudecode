@@ -6,6 +6,20 @@ import type {
 } from 'n8n-workflow';
 import { NodeConnectionType, NodeOperationError } from 'n8n-workflow';
 import { query, type SDKMessage } from '@anthropic-ai/claude-code';
+import { promises as fs } from 'fs';
+import * as path from 'path';
+
+interface ProjectPathValidationResult {
+	isValid: boolean;
+	resolvedPath?: string;
+	error?: string;
+	warnings?: string[];
+	configurationFound?: {
+		claudeSettings?: boolean;
+		claudeLocalSettings?: boolean;
+		mcpConfig?: boolean;
+	};
+}
 
 export class ClaudeCode implements INodeType {
 	description: INodeTypeDescription = {
@@ -221,6 +235,91 @@ export class ClaudeCode implements INodeType {
 		],
 	};
 
+	private static async validateProjectPath(
+		projectPath: string,
+		debug: boolean = false,
+	): Promise<ProjectPathValidationResult> {
+		const result: ProjectPathValidationResult = {
+			isValid: false,
+			warnings: [],
+			configurationFound: {},
+		};
+
+		try {
+			// Resolve and normalize the path
+			const resolvedPath = path.resolve(projectPath);
+			result.resolvedPath = resolvedPath;
+
+			if (debug) {
+				console.log(`[ClaudeCode] Validating project path: ${projectPath} -> ${resolvedPath}`);
+			}
+
+			// Check if path exists
+			try {
+				const stats = await fs.stat(resolvedPath);
+				if (!stats.isDirectory()) {
+					result.error = `Path exists but is not a directory: ${resolvedPath}`;
+					return result;
+				}
+			} catch (err) {
+				result.error = `Directory does not exist: ${resolvedPath}`;
+				return result;
+			}
+
+			// Check read/write permissions
+			try {
+				await fs.access(resolvedPath, fs.constants.R_OK | fs.constants.W_OK);
+			} catch (err) {
+				result.error = `Insufficient permissions for directory: ${resolvedPath}`;
+				return result;
+			}
+
+			// Check for Claude configuration files
+			const configChecks = [
+				{ file: '.claude/settings.json', key: 'claudeSettings' as const },
+				{ file: '.claude/settings.local.json', key: 'claudeLocalSettings' as const },
+				{ file: '.mcp.json', key: 'mcpConfig' as const },
+			];
+
+			for (const { file, key } of configChecks) {
+				const configPath = path.join(resolvedPath, file);
+				try {
+					await fs.access(configPath, fs.constants.R_OK);
+					result.configurationFound![key] = true;
+					if (debug) {
+						console.log(`[ClaudeCode] Found configuration file: ${configPath}`);
+					}
+				} catch (err) {
+					result.configurationFound![key] = false;
+					if (debug) {
+						console.log(`[ClaudeCode] Configuration file not found: ${configPath}`);
+					}
+				}
+			}
+
+			// Add warnings for missing configuration
+			const foundConfigs = Object.values(result.configurationFound || {}).filter(Boolean).length;
+			if (foundConfigs === 0) {
+				result.warnings!.push(
+					'No Claude configuration files found (.claude/settings.json, .claude/settings.local.json, .mcp.json). Claude Code may not work as expected.',
+				);
+			} else if (
+				!result.configurationFound?.claudeSettings &&
+				!result.configurationFound?.claudeLocalSettings
+			) {
+				result.warnings!.push(
+					'No Claude settings files found. Consider creating .claude/settings.json or .claude/settings.local.json for proper configuration.',
+				);
+			}
+
+			result.isValid = true;
+			return result;
+		} catch (err) {
+			result.error = `Unexpected error validating project path: ${err instanceof Error ? err.message : 'Unknown error'}`;
+			return result;
+		}
+	}
+
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
@@ -328,11 +427,44 @@ Your goal is to create a comprehensive plan before any implementation begins.
 					queryOptions.options.systemPrompt = systemPrompt;
 				}
 
-				// Add project path (cwd) if specified
+				// Add project path (cwd) if specified with comprehensive validation
 				if (projectPath && projectPath.trim() !== '') {
-					queryOptions.cwd = projectPath.trim();
+					const pathValidation = await ClaudeCode.validateProjectPath(
+						projectPath.trim(),
+						additionalOptions.debug,
+					);
+
+					if (!pathValidation.isValid) {
+						const errorMsg = `Invalid project path: ${pathValidation.error}`;
+						if (additionalOptions.debug) {
+							console.error(`[ClaudeCode] ${errorMsg}`);
+						}
+						throw new NodeOperationError(this.getNode(), errorMsg, {
+							itemIndex,
+							description:
+								'The specified project path could not be validated. Please check the path exists, is a directory, and has proper permissions.',
+						});
+					}
+
+					queryOptions.cwd = pathValidation.resolvedPath;
+
 					if (additionalOptions.debug) {
-						console.log(`[ClaudeCode] Working directory set to: ${queryOptions.cwd}`);
+						console.log(
+							`[ClaudeCode] Working directory validated and set to: ${pathValidation.resolvedPath}`,
+						);
+						console.log(
+							`[ClaudeCode] Configuration files found:`,
+							pathValidation.configurationFound,
+						);
+					}
+
+					// Log warnings about missing configuration
+					if (pathValidation.warnings && pathValidation.warnings.length > 0) {
+						for (const warning of pathValidation.warnings) {
+							if (additionalOptions.debug) {
+								console.warn(`[ClaudeCode] Warning: ${warning}`);
+							}
+						}
 					}
 				}
 
@@ -380,9 +512,21 @@ Your goal is to create a comprehensive plan before any implementation begins.
 					queryOptions.options.continue = true;
 				}
 
-				// Execute query
+				// Execute query with enhanced error handling and fallback
 				const messages: SDKMessage[] = [];
 				const startTime = Date.now();
+				let querySucceeded = false;
+				let originalCwd = queryOptions.cwd;
+
+				if (additionalOptions.debug) {
+					console.log(`[ClaudeCode] Starting Claude Code SDK query with options:`, {
+						model: queryOptions.options.model,
+						maxTurns: queryOptions.options.maxTurns,
+						cwd: queryOptions.cwd || 'default',
+						toolsCount: queryOptions.options.allowedTools?.length || 0,
+						isPlanMode,
+					});
+				}
 
 				try {
 					for await (const message of query(queryOptions)) {
@@ -401,7 +545,25 @@ Your goal is to create a comprehensive plan before any implementation begins.
 								console.log(`[ClaudeCode] Tool use: ${content.name}`);
 							}
 						}
+
+						// Check for working directory related errors in real-time
+						if (message.type === 'result' && (message as any).error && originalCwd) {
+							const errorStr = JSON.stringify((message as any).error).toLowerCase();
+							if (
+								errorStr.includes('working directory') ||
+								errorStr.includes('cwd') ||
+								errorStr.includes('chdir')
+							) {
+								if (additionalOptions.debug) {
+									console.warn(
+										`[ClaudeCode] Detected working directory error, will retry without custom working directory`,
+									);
+								}
+								break; // Break out to trigger fallback
+							}
+						}
 					}
+					querySucceeded = true;
 
 					clearTimeout(timeoutId);
 
@@ -488,7 +650,86 @@ Your goal is to create a comprehensive plan before any implementation begins.
 					}
 				} catch (queryError) {
 					clearTimeout(timeoutId);
-					throw queryError;
+
+					// Check if this is a working directory related error and we have a custom cwd
+					const isWorkingDirError =
+						queryError instanceof Error &&
+						(queryError.message.toLowerCase().includes('working directory') ||
+							queryError.message.toLowerCase().includes('cwd') ||
+							queryError.message.toLowerCase().includes('chdir') ||
+							queryError.message.toLowerCase().includes('no such file or directory'));
+
+					if (isWorkingDirError && originalCwd && !querySucceeded) {
+						if (additionalOptions.debug) {
+							console.warn(
+								`[ClaudeCode] Query failed with working directory error: ${queryError.message}`,
+							);
+							console.warn(
+								`[ClaudeCode] Attempting fallback execution without custom working directory`,
+							);
+						}
+
+						// Create new timeout for fallback attempt
+						const fallbackAbortController = new AbortController();
+						const fallbackTimeoutId = setTimeout(() => fallbackAbortController.abort(), timeoutMs);
+
+						try {
+							// Retry without custom working directory
+							const fallbackOptions = { ...queryOptions };
+							delete fallbackOptions.cwd;
+							fallbackOptions.abortController = fallbackAbortController;
+
+							if (additionalOptions.debug) {
+								console.log(`[ClaudeCode] Retrying query without custom working directory`);
+							}
+
+							// Clear previous messages and retry
+							messages.length = 0;
+							const fallbackStartTime = Date.now();
+
+							for await (const message of query(fallbackOptions)) {
+								messages.push(message);
+
+								if (additionalOptions.debug) {
+									console.log(`[ClaudeCode] Fallback - Received message type: ${message.type}`);
+								}
+							}
+
+							clearTimeout(fallbackTimeoutId);
+							querySucceeded = true;
+
+							if (additionalOptions.debug) {
+								const fallbackDuration = Date.now() - fallbackStartTime;
+								console.log(
+									`[ClaudeCode] Fallback execution completed successfully in ${fallbackDuration}ms`,
+								);
+								console.warn(
+									`[ClaudeCode] Note: Execution completed using default working directory instead of specified project path`,
+								);
+							}
+						} catch (fallbackError) {
+							clearTimeout(fallbackTimeoutId);
+							if (additionalOptions.debug) {
+								console.error(
+									`[ClaudeCode] Fallback execution also failed: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`,
+								);
+							}
+							throw queryError; // Throw original error, not fallback error
+						}
+					} else {
+						throw queryError;
+					}
+				}
+
+				// Only proceed if query succeeded (either initially or via fallback)
+				if (!querySucceeded) {
+					throw new NodeOperationError(
+						this.getNode(),
+						'Query execution failed without specific error information',
+						{
+							itemIndex,
+						},
+					);
 				}
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';

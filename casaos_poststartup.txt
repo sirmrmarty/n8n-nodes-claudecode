@@ -6,6 +6,7 @@ whoami
 echo "Installing n8n-nodes-claudecode from git..."
 mkdir -p /home/node/.n8n/custom
 cd /home/node/.n8n/custom
+rm -rf n8n-nodes-claudecode
 git clone https://github.com/sirmrmarty/n8n-nodes-claudecode.git
 cd n8n-nodes-claudecode
 npm install
