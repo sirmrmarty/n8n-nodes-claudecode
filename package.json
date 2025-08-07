@@ -1,7 +1,7 @@
 {
   "name": "@sirmrmarty/n8n-nodes-claudecode",
-  "version": "0.3.0",
-  "description": "n8n node for Claude Code SDK integration with enhanced project path validation and error handling",
+  "version": "0.3.4",
+  "description": "n8n node for Claude Code SDK integration with MCP support",
   "keywords": [
     "n8n-community-node-package",
     "n8n",
@@ -18,8 +18,8 @@
     "url": "https://github.com/sirmrmarty/n8n-nodes-claudecode/issues"
   },
   "author": {
-    "name": "SirMrMarty",
-    "email": "your-email@example.com"
+    "name": "sirmrmarty",
+    "email": "sirmrmarty@users.noreply.github.com"
   },
   "repository": {
     "type": "git",
@@ -30,12 +30,14 @@
   },
   "main": "index.js",
   "scripts": {
-    "build": "npx rimraf dist && npx tsc && npx gulp build:icons",
+    "build": "npx rimraf dist && tsc && gulp build:icons",
     "dev": "tsc --watch",
     "format": "prettier nodes --write",
     "lint": "eslint nodes package.json",
     "lintfix": "eslint nodes package.json --fix",
-    "prepublishOnly": "npm run build && npm run lint -c .eslintrc.prepublish.js nodes package.json"
+    "prepublishOnly": "npm run build && npm run lint -c .eslintrc.prepublish.js nodes package.json",
+    "publish:dry": "npm publish --dry-run",
+    "publish:public": "npm publish --access public"
   },
   "files": [
     "dist"

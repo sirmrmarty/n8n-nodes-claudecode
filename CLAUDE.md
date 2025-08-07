@@ -11,6 +11,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run lint` - Run ESLint to check code quality
 - `npm run lintfix` - Auto-fix linting issues where possible
 
+### Publishing
+- `npm run publish:dry` - Test publishing without actually publishing
+- `npm run publish:public` - Publish to npm with public access
+
 ### n8n Integration
 - Install locally: `npm link` then `n8n start` to test the node
 - The node appears in n8n UI under "Claude Code" category
@@ -22,9 +26,10 @@ This is an n8n community node that integrates Claude Code SDK into n8n workflows
 
 1. **Main Node Implementation** (`nodes/ClaudeCode/ClaudeCode.node.ts`)
    - Implements `INodeType` interface from n8n
-   - Provides Query and Continue operations
+   - Provides Query, Plan, Approve Plan, and Continue operations
    - Handles Claude Code SDK initialization and message processing
    - Manages tool availability and project path configuration
+   - Implements planning workflow with ExitPlanMode integration
 
 2. **Tool System**
    - Dynamic tool enabling/disabling based on user configuration
@@ -38,8 +43,54 @@ This is an n8n community node that integrates Claude Code SDK into n8n workflows
 
 4. **Project Path Support** (v0.2.0+)
    - Configure working directory via `projectPath` parameter
-   - Allows Claude Code to run in specific project directories
-   - Enables access to code repositories without changing n8n's working directory
+   - **Actually changes the process working directory** during Claude Code execution
+   - Claude sees and reports the correct project directory as its current working directory
+   - All tools and commands operate from the specified project location
+   - n8n's working directory is automatically restored after execution
+
+## Planning Operations (v3.0+)
+
+### Operation Types
+- **Plan**: Creates execution plan using ExitPlanMode, waits for approval
+- **Approve Plan**: Executes previously created plan with optional modifications
+- **Query**: Direct execution without planning (original behavior)
+- **Continue**: Continue previous conversation
+
+### Planning Configuration
+- **Plan Detail Level**: 
+  - `high` - High-level overview (3-7 main steps)
+  - `detailed` - Specific actionable steps with technical details
+  - `stepwise` - Granular breakdown with sub-steps and validation
+- **Auto-approve**: Automatically execute simple, low-risk plans
+- **Plan Modifications**: Apply feedback before execution
+
+### Planning System Prompts
+The `generatePlanningSystemPrompt()` method creates operation-specific system prompts:
+- Instructs Claude to use ExitPlanMode tool after planning
+- Configures detail level and approval requirements
+- Sets up auto-approval criteria for simple plans
+
+### Example Usage
+```javascript
+// Create detailed plan
+{
+  "operation": "plan",
+  "prompt": "Add user authentication to the API",
+  "additionalOptions": {
+    "planDetailLevel": "detailed",
+    "autoApprove": false
+  }
+}
+
+// Execute with modifications
+{
+  "operation": "approve",
+  "prompt": "Add user authentication to the API", 
+  "additionalOptions": {
+    "planModifications": "Use bcrypt for password hashing instead of default"
+  }
+}
+```
 
 ## Key Development Patterns
 
@@ -84,3 +135,5 @@ Key configuration files:
 - `.claude/settings.local.json`: Personal settings (gitignored)
 
 When using Project Path, Claude Code automatically loads these configurations from the specified directory.
+
+**Important**: The Project Path feature now truly changes the Node.js process working directory during execution, ensuring Claude operates from and reports the correct project location. This provides a more authentic and reliable development experience.

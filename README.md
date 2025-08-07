@@ -2,11 +2,13 @@
 
 **Bring the power of Claude Code directly into your n8n automation workflows!**
 
+> **Attribution**: This project is based on and extends the excellent work by [holt-web-ai](https://github.com/holt-web-ai/n8n-nodes-claudecode). We've added enhanced features including comprehensive planning workflows, improved project path handling, and better debugging capabilities.
+
 Imagine having an AI coding assistant that can analyze your codebase, fix bugs, write new features, manage databases, interact with APIs, and automate your entire development workflow - all within n8n. That's exactly what this node enables.
 
 [![n8n](https://img.shields.io/badge/n8n-community_node-orange.svg)](https://n8n.io/)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Powered-blue.svg)](https://claude.ai/code)
-[![npm](https://img.shields.io/npm/v/@holtweb/n8n-nodes-claudecode.svg)](https://www.npmjs.com/package/@holtweb/n8n-nodes-claudecode)
+[![npm](https://img.shields.io/npm/v/@sirmrmarty/n8n-nodes-claudecode.svg)](https://www.npmjs.com/package/@sirmrmarty/n8n-nodes-claudecode)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.md)
 
 ## 🌟 What Can You Build?
@@ -48,15 +50,13 @@ Transform support tickets into code fixes automatically:
 
 ### Install in n8n
 
-#### Option 1: Via n8n UI (Recommended) - Improved Version
+#### Option 1: Via n8n UI (Recommended)
 1. Open your n8n instance
 2. Go to **Settings** → **Community Nodes**
 3. Click **Install a community node**
 4. Enter: `@sirmrmarty/n8n-nodes-claudecode`
 5. Click **Install**
 6. Restart n8n when prompted
-
-*This version includes enhanced project path validation, better error handling, and comprehensive debugging capabilities.*
 
 #### Option 2: Manual Installation
 ```bash
@@ -73,9 +73,6 @@ docker run -it --rm \
   -v ~/.n8n:/home/node/.n8n \
   n8nio/n8n
 ```
-
-#### Option 4: GitHub Clone (Development Version)
-For the absolute latest improvements, see [INSTALL.md](./INSTALL.md) for detailed GitHub installation instructions.
 
 **Note**: For Docker, you'll need to ensure Claude Code CLI is installed inside the container. Consider creating a custom Dockerfile.
 
@@ -143,6 +140,139 @@ Extend Claude Code with specialized capabilities:
 - GitHub repository management
 - Slack workspace integration
 - Custom tool development
+
+## 🎯 Planning & Approval Workflow (NEW!)
+
+**v3.0+ introduces powerful planning capabilities that let you review and approve changes before execution!**
+
+### **Plan → Review → Approve Workflow**
+Create comprehensive plans first, review them, then approve for execution - perfect for:
+- Complex database migrations 
+- Multi-step code refactoring
+- Infrastructure changes
+- Customer-facing modifications
+
+### **Operation Types**
+- **Plan**: Creates a detailed execution plan without running it
+- **Approve Plan**: Executes a previously created plan (with optional modifications)
+- **Query**: Direct execution (original behavior)
+- **Continue**: Continue previous conversation
+
+### **Planning Features**
+- **Multiple Detail Levels**: High-level, Detailed, or Step-by-Step granularity
+- **Plan Modifications**: Provide feedback before execution (e.g., "Skip the testing step")
+- **Auto-Approval**: Simple, low-risk plans can execute automatically
+- **Risk Assessment**: Claude evaluates plan complexity and safety
+
+### **Example Planning Workflows**
+
+#### 🔧 **Database Migration Planning**
+```javascript
+// Step 1: Create detailed migration plan
+{
+  "operation": "plan",
+  "prompt": "Add a new 'user_preferences' table with foreign key to users table, including indexes",
+  "projectPath": "/path/to/my-app",
+  "model": "opus",
+  "additionalOptions": {
+    "planDetailLevel": "stepwise",  // Very detailed for DB changes
+    "autoApprove": false,           // Always review DB changes
+    "systemPrompt": "Focus on data integrity, proper indexing, and backward compatibility"
+  }
+}
+
+// Step 2: Review the generated plan, then approve with modifications
+{
+  "operation": "approve",
+  "prompt": "Add a new 'user_preferences' table with foreign key to users table, including indexes",
+  "projectPath": "/path/to/my-app", 
+  "additionalOptions": {
+    "planModifications": "Add a rollback script and use BIGINT for IDs instead of INT"
+  }
+}
+```
+
+#### 🐛 **Bug Fix with Planning**
+```javascript
+// Step 1: Plan the bug fix
+{
+  "operation": "plan",
+  "prompt": "Fix the memory leak in the WebSocket connection handler that's causing server crashes",
+  "projectPath": "/path/to/api-server",
+  "model": "sonnet",
+  "additionalOptions": {
+    "planDetailLevel": "detailed",
+    "autoApprove": true,  // Simple fixes can auto-approve
+    "systemPrompt": "Focus on identifying the root cause and ensure proper cleanup of resources"
+  }
+}
+```
+
+#### 🏗️ **Feature Development Planning**
+```javascript
+// Step 1: Create high-level feature plan
+{
+  "operation": "plan", 
+  "prompt": "Implement user role-based permissions system with admin, editor, and viewer roles",
+  "projectPath": "/path/to/webapp",
+  "model": "opus",
+  "additionalOptions": {
+    "planDetailLevel": "high",      // Start with overview
+    "autoApprove": false,
+    "systemPrompt": "Consider security best practices, scalability, and existing authentication system"
+  }
+}
+
+// Step 2: Get more detailed plan
+{
+  "operation": "plan",
+  "prompt": "Implement user role-based permissions system - focus on database schema and API endpoints",
+  "additionalOptions": {
+    "planDetailLevel": "stepwise",  // Now get granular details
+    "planModifications": "Use the existing user table and add role-based middleware"
+  }
+}
+
+// Step 3: Execute with final adjustments
+{
+  "operation": "approve",
+  "prompt": "Implement user role-based permissions system",
+  "additionalOptions": {
+    "planModifications": "Start with just admin and user roles for MVP"
+  }
+}
+```
+
+#### 🔄 **Refactoring with Safety**
+```javascript
+// Plan major refactoring work
+{
+  "operation": "plan",
+  "prompt": "Refactor the monolithic service into microservices - start with user management",
+  "projectPath": "/path/to/monolith",
+  "model": "opus",
+  "additionalOptions": {
+    "planDetailLevel": "detailed",
+    "autoApprove": false,  // Never auto-approve major refactoring
+    "systemPrompt": "Prioritize maintaining functionality, minimize downtime, and ensure comprehensive testing"
+  }
+}
+```
+
+#### 🚀 **Production Deployment Planning**
+```javascript
+// Plan deployment with rollback strategy
+{
+  "operation": "plan",
+  "prompt": "Deploy v2.1.0 to production with zero downtime and automatic rollback if errors occur",
+  "projectPath": "/path/to/deployment-scripts",
+  "additionalOptions": {
+    "planDetailLevel": "stepwise",
+    "autoApprove": false,
+    "systemPrompt": "Include health checks, monitoring setup, and detailed rollback procedures"
+  }
+}
+```
 
 ## 📋 Configuration Examples
 
@@ -285,10 +415,10 @@ Use "Continue" operation to build complex multi-step workflows while maintaining
 
 ## 🤝 Community & Support
 
-- 📖 [Documentation](https://github.com/holt-web-ai/n8n-nodes-claudecode)
-- 🐛 [Report Issues](https://github.com/holt-web-ai/n8n-nodes-claudecode/issues)
-- 💬 [Discussions](https://github.com/holt-web-ai/n8n-nodes-claudecode/discussions)
-- 🌟 [Star on GitHub](https://github.com/holt-web-ai/n8n-nodes-claudecode)
+- 📖 [Documentation](https://github.com/sirmrmarty/n8n-nodes-claudecode)
+- 🐛 [Report Issues](https://github.com/sirmrmarty/n8n-nodes-claudecode/issues)
+- 💬 [Discussions](https://github.com/sirmrmarty/n8n-nodes-claudecode/discussions)
+- 🌟 [Star on GitHub](https://github.com/sirmrmarty/n8n-nodes-claudecode)
 
 ## 📈 What's Next?
 
@@ -306,4 +436,4 @@ MIT - Build amazing things!
 
 **Ready to revolutionize your development workflow?** Install Claude Code for n8n today and join the future of automated software development!
 
-Made with ❤️ by [Adam Holt](https://github.com/holt-web-ai)
+Enhanced and maintained by [sirmrmarty](https://github.com/sirmrmarty)

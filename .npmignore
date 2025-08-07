@@ -3,7 +3,7 @@ nodes/
 credentials/
 *.ts
 !*.d.ts
-
+CLAUDE.md
 # Config files
 .eslintrc.js
 .eslintrc.prepublish.js
@@ -25,8 +25,6 @@ coverage/
 
 # IDE files
 .vscode/
-.CLAUDE
-.github
 .idea/
 *.swp
 *.swo
@@ -36,17 +34,9 @@ coverage/
 # Keep only the built files
 !dist/
 
-# Examples and documentation
+# Examples
 examples/
 workflow-templates/
-INSTALL.md
-CLAUDE.md
-CODE_OF_CONDUCT.md
-
-# Custom scripts and development files
-install-to-n8n.sh
-validate-node.js
-casaos_poststartup.txt
-
-# Lock files (keep package-lock for reproducible builds)
-yarn.lock
+.mcp.json
+.github/
+.claude
