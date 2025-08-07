@@ -43,8 +43,10 @@ This is an n8n community node that integrates Claude Code SDK into n8n workflows
 
 4. **Project Path Support** (v0.2.0+)
    - Configure working directory via `projectPath` parameter
-   - Allows Claude Code to run in specific project directories
-   - Enables access to code repositories without changing n8n's working directory
+   - **Actually changes the process working directory** during Claude Code execution
+   - Claude sees and reports the correct project directory as its current working directory
+   - All tools and commands operate from the specified project location
+   - n8n's working directory is automatically restored after execution
 
 ## Planning Operations (v3.0+)
 
@@ -133,3 +135,5 @@ Key configuration files:
 - `.claude/settings.local.json`: Personal settings (gitignored)
 
 When using Project Path, Claude Code automatically loads these configurations from the specified directory.
+
+**Important**: The Project Path feature now truly changes the Node.js process working directory during execution, ensuring Claude operates from and reports the correct project location. This provides a more authentic and reliable development experience.

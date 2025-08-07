@@ -3,7 +3,7 @@ nodes/
 credentials/
 *.ts
 !*.d.ts
-
+CLAUDE.md
 # Config files
 .eslintrc.js
 .eslintrc.prepublish.js
@@ -37,3 +37,6 @@ coverage/
 # Examples
 examples/
 workflow-templates/
+.mcp.json
+.github/
+.claude

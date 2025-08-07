@@ -550,8 +550,25 @@ Planning Guidelines:
 				// Execute query
 				const messages: SDKMessage[] = [];
 				const startTime = Date.now();
+				
+				// Store original working directory for restoration
+				const originalCwd = process.cwd();
+				let workingDirectoryChanged = false;
 
 				try {
+					// Change working directory if project path is specified
+					if (queryOptions.cwd && queryOptions.cwd !== originalCwd) {
+						if (additionalOptions.debug) {
+							console.log(`[ClaudeCode] Changing working directory from ${originalCwd} to ${queryOptions.cwd}`);
+						}
+						process.chdir(queryOptions.cwd);
+						workingDirectoryChanged = true;
+						
+						if (additionalOptions.debug) {
+							console.log(`[ClaudeCode] Working directory successfully changed to: ${process.cwd()}`);
+						}
+					}
+
 					for await (const message of query(queryOptions)) {
 						messages.push(message);
 
@@ -641,6 +658,22 @@ Planning Guidelines:
 				} catch (queryError) {
 					clearTimeout(timeoutId);
 					throw queryError;
+				} finally {
+					// Always restore the original working directory
+					if (workingDirectoryChanged) {
+						if (additionalOptions.debug) {
+							console.log(`[ClaudeCode] Restoring working directory to: ${originalCwd}`);
+						}
+						try {
+							process.chdir(originalCwd);
+							if (additionalOptions.debug) {
+								console.log(`[ClaudeCode] Working directory successfully restored to: ${process.cwd()}`);
+							}
+						} catch (chdirError) {
+							console.error(`[ClaudeCode] ERROR: Failed to restore working directory to ${originalCwd}:`, chdirError);
+							// This is a critical error, but we don't want to throw here as it might mask the original error
+						}
+					}
 				}
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';

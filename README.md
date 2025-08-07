@@ -2,6 +2,8 @@
 
 **Bring the power of Claude Code directly into your n8n automation workflows!**
 
+> **Attribution**: This project is based on and extends the excellent work by [holt-web-ai](https://github.com/holt-web-ai/n8n-nodes-claudecode). We've added enhanced features including comprehensive planning workflows, improved project path handling, and better debugging capabilities.
+
 Imagine having an AI coding assistant that can analyze your codebase, fix bugs, write new features, manage databases, interact with APIs, and automate your entire development workflow - all within n8n. That's exactly what this node enables.
 
 [![n8n](https://img.shields.io/badge/n8n-community_node-orange.svg)](https://n8n.io/)
@@ -162,24 +164,112 @@ Create comprehensive plans first, review them, then approve for execution - perf
 - **Auto-Approval**: Simple, low-risk plans can execute automatically
 - **Risk Assessment**: Claude evaluates plan complexity and safety
 
-### **Example Planning Workflow**
+### **Example Planning Workflows**
+
+#### 🔧 **Database Migration Planning**
 ```javascript
-// Step 1: Create Plan
+// Step 1: Create detailed migration plan
 {
   "operation": "plan",
-  "prompt": "Refactor the user authentication system to use JWT tokens",
+  "prompt": "Add a new 'user_preferences' table with foreign key to users table, including indexes",
+  "projectPath": "/path/to/my-app",
+  "model": "opus",
   "additionalOptions": {
-    "planDetailLevel": "detailed",
-    "autoApprove": false
+    "planDetailLevel": "stepwise",  // Very detailed for DB changes
+    "autoApprove": false,           // Always review DB changes
+    "systemPrompt": "Focus on data integrity, proper indexing, and backward compatibility"
   }
 }
 
-// Step 2: Review plan output, then approve
+// Step 2: Review the generated plan, then approve with modifications
 {
-  "operation": "approve", 
-  "prompt": "Refactor the user authentication system to use JWT tokens",
+  "operation": "approve",
+  "prompt": "Add a new 'user_preferences' table with foreign key to users table, including indexes",
+  "projectPath": "/path/to/my-app", 
   "additionalOptions": {
-    "planModifications": "Skip the database migration step - I'll handle that manually"
+    "planModifications": "Add a rollback script and use BIGINT for IDs instead of INT"
+  }
+}
+```
+
+#### 🐛 **Bug Fix with Planning**
+```javascript
+// Step 1: Plan the bug fix
+{
+  "operation": "plan",
+  "prompt": "Fix the memory leak in the WebSocket connection handler that's causing server crashes",
+  "projectPath": "/path/to/api-server",
+  "model": "sonnet",
+  "additionalOptions": {
+    "planDetailLevel": "detailed",
+    "autoApprove": true,  // Simple fixes can auto-approve
+    "systemPrompt": "Focus on identifying the root cause and ensure proper cleanup of resources"
+  }
+}
+```
+
+#### 🏗️ **Feature Development Planning**
+```javascript
+// Step 1: Create high-level feature plan
+{
+  "operation": "plan", 
+  "prompt": "Implement user role-based permissions system with admin, editor, and viewer roles",
+  "projectPath": "/path/to/webapp",
+  "model": "opus",
+  "additionalOptions": {
+    "planDetailLevel": "high",      // Start with overview
+    "autoApprove": false,
+    "systemPrompt": "Consider security best practices, scalability, and existing authentication system"
+  }
+}
+
+// Step 2: Get more detailed plan
+{
+  "operation": "plan",
+  "prompt": "Implement user role-based permissions system - focus on database schema and API endpoints",
+  "additionalOptions": {
+    "planDetailLevel": "stepwise",  // Now get granular details
+    "planModifications": "Use the existing user table and add role-based middleware"
+  }
+}
+
+// Step 3: Execute with final adjustments
+{
+  "operation": "approve",
+  "prompt": "Implement user role-based permissions system",
+  "additionalOptions": {
+    "planModifications": "Start with just admin and user roles for MVP"
+  }
+}
+```
+
+#### 🔄 **Refactoring with Safety**
+```javascript
+// Plan major refactoring work
+{
+  "operation": "plan",
+  "prompt": "Refactor the monolithic service into microservices - start with user management",
+  "projectPath": "/path/to/monolith",
+  "model": "opus",
+  "additionalOptions": {
+    "planDetailLevel": "detailed",
+    "autoApprove": false,  // Never auto-approve major refactoring
+    "systemPrompt": "Prioritize maintaining functionality, minimize downtime, and ensure comprehensive testing"
+  }
+}
+```
+
+#### 🚀 **Production Deployment Planning**
+```javascript
+// Plan deployment with rollback strategy
+{
+  "operation": "plan",
+  "prompt": "Deploy v2.1.0 to production with zero downtime and automatic rollback if errors occur",
+  "projectPath": "/path/to/deployment-scripts",
+  "additionalOptions": {
+    "planDetailLevel": "stepwise",
+    "autoApprove": false,
+    "systemPrompt": "Include health checks, monitoring setup, and detailed rollback procedures"
   }
 }
 ```
