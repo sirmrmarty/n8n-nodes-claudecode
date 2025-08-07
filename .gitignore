@@ -9,3 +9,7 @@ yarn.lock
 .claude
 CLAUDE.md
 .mcp.json
+*.tgz
+CLAUDE.md
+CODE_OF_CONDUCT.md
+.vscode
