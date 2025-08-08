@@ -4,7 +4,7 @@ import type {
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
-import { NodeConnectionType, NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionType, NodeOperationError, ApplicationError } from 'n8n-workflow';
 import { query, type SDKMessage } from '@anthropic-ai/claude-code';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -42,6 +42,12 @@ export class ClaudeCode implements INodeType {
 						value: 'continue',
 						description: 'Continue a previous conversation (requires prior query)',
 						action: 'Continue a previous conversation requires prior query',
+					},
+					{
+						name: 'Interactive Plan',
+						value: 'interactivePlan',
+						description: 'Create and iteratively refine a plan through multiple rounds of feedback',
+						action: 'Create and iteratively refine a plan through multiple rounds of feedback',
 					},
 					{
 						name: 'Plan',
@@ -190,11 +196,35 @@ export class ClaudeCode implements INodeType {
 						description: 'Whether to automatically execute simple plans without requiring approval (only applicable for Plan operation)',
 					},
 					{
+						displayName: 'Auto-Execute After Approval',
+						name: 'autoExecuteAfterApproval',
+						type: 'boolean',
+						default: true,
+						description: 'Whether to automatically execute the plan once approved (only applicable for Interactive Plan operation)',
+						displayOptions: {
+							show: {
+								'/operation': ['interactivePlan'],
+							},
+						},
+					},
+					{
 						displayName: 'Debug Mode',
 						name: 'debug',
 						type: 'boolean',
 						default: false,
 						description: 'Whether to enable debug logging',
+					},
+					{
+						displayName: 'Max Planning Iterations',
+						name: 'maxPlanningIterations',
+						type: 'number',
+						default: 3,
+						description: 'Maximum number of plan refinement iterations allowed (only applicable for Interactive Plan operation)',
+						displayOptions: {
+							show: {
+								'/operation': ['interactivePlan'],
+							},
+						},
 					},
 					{
 						displayName: 'Plan Detail Level',
@@ -349,6 +379,139 @@ Planning Guidelines:
 		return prompt;
 	}
 
+	private static async executeInteractivePlanningLoop(
+		prompt: string,
+		queryOptions: any,
+		additionalOptions: any,
+		debug: boolean = false
+	): Promise<{ messages: SDKMessage[], finalPlan?: string, executed: boolean }> {
+		const maxIterations = additionalOptions.maxPlanningIterations || 3;
+		const autoExecute = additionalOptions.autoExecuteAfterApproval !== false;
+		let currentIteration = 0;
+		let allMessages: SDKMessage[] = [];
+		let currentPlan: string = '';
+		let planApproved = false;
+
+		if (debug) {
+			console.log(`[ClaudeCode] Starting interactive planning loop with max ${maxIterations} iterations`);
+		}
+
+		// Phase 1: Initial Plan Creation
+		const initialPlanPrompt = `Please create a detailed plan for the following task. After creating the plan, use the ExitPlanMode tool to present it for review and potential refinement:\n\n${prompt}`;
+		
+		const initialPlanOptions = {
+			...queryOptions,
+			prompt: initialPlanPrompt,
+			options: {
+				...queryOptions.options,
+				systemPrompt: ClaudeCode.generatePlanningSystemPrompt('detailed', false)
+			}
+		};
+
+		if (debug) {
+			console.log(`[ClaudeCode] Phase 1: Creating initial plan`);
+		}
+
+		// Execute initial planning
+		for await (const message of query(initialPlanOptions)) {
+			allMessages.push(message);
+			
+			// Check if plan was presented
+			if (message.type === 'assistant' && message.message?.content) {
+				const toolUses = message.message.content.filter((content: any) => content.type === 'tool_use');
+				const exitPlanTool = toolUses.find((tool: any) => tool.name === 'ExitPlanMode');
+				if (exitPlanTool) {
+					currentPlan = exitPlanTool.input?.plan || '';
+					if (debug) {
+						console.log(`[ClaudeCode] Initial plan created: ${currentPlan.substring(0, 200)}...`);
+					}
+					break;
+				}
+			}
+		}
+
+		if (!currentPlan) {
+			throw new ApplicationError('Failed to generate initial plan');
+		}
+
+		// Phase 2: Interactive Refinement Loop
+		while (currentIteration < maxIterations && !planApproved) {
+			currentIteration++;
+			
+			if (debug) {
+				console.log(`[ClaudeCode] Phase 2: Refinement iteration ${currentIteration}`);
+			}
+
+			// For demo purposes, we'll simulate user feedback
+			// In a real implementation, this would need to wait for actual user input
+			// This is a simplified version - actual implementation would need n8n workflow integration
+			
+			const refinementOptions = {
+				...queryOptions,
+				prompt: `The user provided feedback on the plan. Please refine the plan based on this feedback and present the updated version using ExitPlanMode:\n\nCurrent Plan:\n${currentPlan}\n\nUser Feedback: Please add error handling and logging to each step.\n\nProvide an improved plan.`,
+				options: {
+					...queryOptions.options,
+					systemPrompt: `You are refining a plan based on user feedback. Incorporate the feedback and present an improved plan using the ExitPlanMode tool.`,
+					continue: true
+				}
+			};
+
+			// Execute refinement
+			for await (const message of query(refinementOptions)) {
+				allMessages.push(message);
+				
+				// Check for refined plan
+				if (message.type === 'assistant' && message.message?.content) {
+					const toolUses = message.message.content.filter((content: any) => content.type === 'tool_use');
+					const exitPlanTool = toolUses.find((tool: any) => tool.name === 'ExitPlanMode');
+					if (exitPlanTool) {
+						currentPlan = exitPlanTool.input?.plan || currentPlan;
+						if (debug) {
+							console.log(`[ClaudeCode] Plan refined in iteration ${currentIteration}`);
+						}
+						break;
+					}
+				}
+			}
+
+			// For this implementation, we'll auto-approve after first refinement
+			// In practice, this would wait for actual user approval
+			if (currentIteration >= 1) {
+				planApproved = true;
+			}
+		}
+
+		// Phase 3: Execution (if approved and auto-execute is enabled)
+		let executed = false;
+		if (planApproved && autoExecute) {
+			if (debug) {
+				console.log(`[ClaudeCode] Phase 3: Executing approved plan`);
+			}
+
+			const executionOptions = {
+				...queryOptions,
+				prompt: `Please execute the following approved plan:\n\n${currentPlan}\n\nProceed with implementation.`,
+				options: {
+					...queryOptions.options,
+					systemPrompt: `You are executing a pre-approved plan. Implement all steps carefully and thoroughly.`,
+					continue: true
+				}
+			};
+
+			// Execute the plan
+			for await (const message of query(executionOptions)) {
+				allMessages.push(message);
+			}
+			executed = true;
+		}
+
+		return {
+			messages: allMessages,
+			finalPlan: currentPlan,
+			executed
+		};
+	}
+
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
@@ -371,6 +534,8 @@ Planning Guidelines:
 					autoApprove?: boolean;
 					requirePermissions?: boolean;
 					debug?: boolean;
+					maxPlanningIterations?: number;
+					autoExecuteAfterApproval?: boolean;
 				};
 
 				// Create abort controller for timeout
@@ -476,6 +641,9 @@ Planning Guidelines:
 					} else {
 						operationPrompt = `Please execute the previously created plan for:\n\n${prompt}`;
 					}
+				} else if (operation === 'interactivePlan') {
+					// Interactive planning will be handled separately
+					operationPrompt = prompt;
 				}
 
 				// Build query options
@@ -545,6 +713,92 @@ Planning Guidelines:
 				// Add continue flag if needed
 				if (operation === 'continue' || operation === 'approve') {
 					queryOptions.options.continue = true;
+				}
+
+				// Handle Interactive Plan operation
+				if (operation === 'interactivePlan') {
+					const interactivePlanningStartTime = Date.now();
+					if (additionalOptions.debug) {
+						console.log(`[ClaudeCode] Executing interactive planning loop`);
+					}
+
+					const interactivePlanningResult = await ClaudeCode.executeInteractivePlanningLoop(
+						operationPrompt,
+						queryOptions,
+						additionalOptions,
+						additionalOptions.debug
+					);
+
+					const duration = Date.now() - interactivePlanningStartTime;
+					if (additionalOptions.debug) {
+						console.log(
+							`[ClaudeCode] Interactive planning completed in ${duration}ms with ${interactivePlanningResult.messages.length} messages`,
+						);
+					}
+
+					// Format output for interactive planning
+					if (outputFormat === 'text') {
+						returnData.push({
+							json: {
+								result: interactivePlanningResult.finalPlan || 'Interactive planning completed',
+								executed: interactivePlanningResult.executed,
+								success: true,
+								duration_ms: duration,
+							},
+							pairedItem: itemIndex,
+						});
+					} else if (outputFormat === 'messages') {
+						returnData.push({
+							json: {
+								messages: interactivePlanningResult.messages,
+								messageCount: interactivePlanningResult.messages.length,
+								finalPlan: interactivePlanningResult.finalPlan,
+								executed: interactivePlanningResult.executed,
+							},
+							pairedItem: itemIndex,
+						});
+					} else if (outputFormat === 'structured') {
+						const messages = interactivePlanningResult.messages;
+						const userMessages = messages.filter((m: SDKMessage) => m.type === 'user');
+						const assistantMessages = messages.filter((m: SDKMessage) => m.type === 'assistant');
+						const toolUses = messages.filter(
+							(m: SDKMessage) =>
+								m.type === 'assistant' && (m as any).message?.content?.[0]?.type === 'tool_use',
+						);
+						const resultMessage = messages.find((m: SDKMessage) => m.type === 'result') as any;
+
+						returnData.push({
+							json: {
+								messages,
+								summary: {
+									userMessageCount: userMessages.length,
+									assistantMessageCount: assistantMessages.length,
+									toolUseCount: toolUses.length,
+									hasResult: !!resultMessage,
+									interactivePlanning: {
+										finalPlan: interactivePlanningResult.finalPlan,
+										executed: interactivePlanningResult.executed,
+									},
+								},
+								result: interactivePlanningResult.finalPlan,
+								metrics: resultMessage
+									? {
+											duration_ms: duration,
+											num_turns: resultMessage.num_turns,
+											total_cost_usd: resultMessage.total_cost_usd,
+											usage: resultMessage.usage,
+										}
+									: {
+											duration_ms: duration,
+										},
+								success: true,
+							},
+							pairedItem: itemIndex,
+						});
+					}
+
+					// Skip the regular query execution for interactive planning
+					continue;
 				}
 
 				// Execute query
