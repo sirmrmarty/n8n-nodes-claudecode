@@ -61,18 +61,18 @@ This is an n8n community node that integrates Claude Code SDK into n8n workflows
   - `high` - High-level overview (3-7 main steps)
   - `detailed` - Specific actionable steps with technical details
   - `stepwise` - Granular breakdown with sub-steps and validation
-- **Auto-approve**: Automatically execute simple, low-risk plans
+- **Auto-Execute Plan**: Whether to automatically execute simple, low-risk plans after creation
 - **Plan Modifications**: Apply feedback before execution
 
 ### Planning System Prompts
 The `generatePlanningSystemPrompt()` method creates operation-specific system prompts:
 - Instructs Claude to use ExitPlanMode tool after planning
 - Configures detail level and approval requirements
-- Sets up auto-approval criteria for simple plans
+- Supports both auto-execution and manual approval modes based on user configuration
 
 ### Example Usage
 ```javascript
-// Create detailed plan
+// Create plan and wait for manual approval
 {
   "operation": "plan",
   "prompt": "Add user authentication to the API",
@@ -82,7 +82,17 @@ The `generatePlanningSystemPrompt()` method creates operation-specific system pr
   }
 }
 
-// Execute with modifications
+// Create plan with auto-execution for simple tasks
+{
+  "operation": "plan", 
+  "prompt": "Add a simple logger utility function",
+  "additionalOptions": {
+    "planDetailLevel": "detailed",
+    "autoApprove": true
+  }
+}
+
+// Execute previously created plan with modifications
 {
   "operation": "approve",
   "prompt": "Add user authentication to the API", 
